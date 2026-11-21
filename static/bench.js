@@ -351,11 +351,16 @@ function measureOptions() {
     case "color":
       return selector("Neutral patch", "neutral_mark", { "": "As photographed", ...markOptions("reference") }) +
         numericOption("Swatches", "swatches", 7, 2, 12, 1) + boxOption();
-    case "visit":
+    case "visit": {
+      const stable = Object.values(markOptions("reference"));
       return selector("Comparison capture", "comparison",
         photoOptions(model.item.captures.filter(item => item.alignment && item.role === photo()?.role && item.id !== model.capture)), model.selectedPair) +
         selector("Measurement", "difference_kind", { luminance: "Linear luminance", color: "Color distance" }) +
-        selector("Stable patch", "reference_mark", { "": "Use exposure as recorded", ...markOptions("reference") }) + boxOption();
+        '<strong>Stable patches for illumination correction</strong><p class="help">Pick none for the raw, uncorrected view, one for a single reference region, or several scattered patches. With several patches only the area inside the hull joining them is judged; everything else is marked uncomparable rather than changed or steady.</p>' +
+        (stable.length ? '<div class="check-list" id="stable-patches">' +
+          Object.entries(markOptions("reference")).map(([id, label]) => checkbox(label, "reference_marks", false, id)).join("") +
+          "</div>" : '<p class="help">No reference patch marks exist yet. Draw them in the Markings tab.</p>') + boxOption();
+    }
     default:
       return "";
   }
@@ -430,6 +435,30 @@ function pictureAssets(item) {
   }).join("");
 }
 
+function visitCorrection(reading) {
+  const ref = reading.reference;
+  if (!ref) return "";
+  if (!ref.applied) {
+    return '<h3>Illumination correction</h3><p class="help">No stable patch selected. This is the raw, uncorrected comparison and overall capture drift remains in the differences.</p>';
+  }
+  const statusText = {
+    used: "Participated", unpaired: "Only one capture covers it — not used",
+    excluded_inconsistent: "Inconsistent with the fitted field — excluded",
+  };
+  const rows = ref.patches.map(patch => '<article class="list-item"><strong>' + escapeHtml(patch.title || patch.patch) +
+    '</strong><small>' + escapeHtml(statusText[patch.status] || patch.status) +
+    ' · ' + patch.paired_samples + ' common pixels · shift ' + escapeHtml(Array.isArray(patch.shift) ? patch.shift.join(", ") : patch.shift) +
+    '</small></article>').join("");
+  return '<h3>Illumination correction</h3><dl class="summary-grid">' +
+    "<dt>Correction model</dt><dd>" + escapeHtml(title(ref.model)) + "</dd>" +
+    "<dt>Judged coverage</dt><dd>" + Math.round((ref.coverage_fraction || 0) * 100) + "% of the pane</dd>" +
+    "<dt>Uncomparable pixels</dt><dd>" + escapeHtml(textFormat(reading.uncomparable_pixels)) + "</dd></dl>" +
+    '<p class="help">Stable patches that participated in this saved judgment. Areas outside the hull joining the used patches are marked uncomparable, never as change or steady.</p>' +
+    '<div class="record-list">' + rows + "</div>" +
+    (reading.caveats?.length ? '<h3>Caveats</h3><ul class="help">' +
+      reading.caveats.map(note => "<li>" + escapeHtml(note) + "</li>").join("") + "</ul>" : "");
+}
+
 function showRecord(item) {
   const overview = item.reading || item.measure || item;
   const resources = (item.assets || []).filter(asset => asset.mime !== "image/png" || asset.label === "original")
@@ -438,16 +467,18 @@ function showRecord(item) {
   if (csvPaths[item.kind]) resources.push(link("Download CSV", "/api/" + csvPaths[item.kind] + "/" + item.id + "/data.csv"));
   if (item.tool === "color") resources.push(button("Approve as swatch", "approve", "", item.id));
   if (item.kind === "references") resources.push(button(item.state === "retired" ? "Restore reference" : "Retire reference", "toggle-ref", "", item.id));
+  const visitBlock = item.tool === "visit" && item.reading ? visitCorrection(item.reading) : "";
   openModal(item.title || item.name || item.caption || "Record", controls(...resources, button("Check stored evidence", "audit", "", item.id)) +
-    details(overview) + '<div class="reader">' + pictureAssets(item) + '</div><div id="audit-result"></div><details><summary>Recorded values and provenance</summary><pre>' +
+    visitBlock + details(overview) + '<div class="reader">' + pictureAssets(item) + '</div><div id="audit-result"></div><details><summary>Recorded values and provenance</summary><pre>' +
     escapeHtml(JSON.stringify(item, null, 2)) + "</pre></details>", true);
 }
 
 function renderResult(item) {
   const result = document.getElementById("bench-result");
   if (!result || !item) return;
+  const visitBlock = item.tool === "visit" && item.reading ? visitCorrection(item.reading) : "";
   result.innerHTML = '<section class="panel record"><div class="section-head"><h3>' + escapeHtml(item.title) + "</h3>" +
-    button("Open result", "view-record", "", item.id) + "</div>" + details(item.reading || item.measure || item) + "</section>";
+    button("Open result", "view-record", "", item.id) + "</div>" + visitBlock + details(item.reading || item.measure || item) + "</section>";
 }
 
 function receivedView(items) {
@@ -508,7 +539,7 @@ function parsePoints(form, key, fallback) {
 function measureData(element) {
   const options = {};
   for (const node of element.querySelectorAll("#measure-options input, #measure-options textarea, #measure-options select")) {
-    if (node.value === "") continue;
+    if (node.value === "" || node.type === "checkbox") continue;
     if (node.name === "pane") {
       options.panes = [node.value];
       continue;
@@ -516,6 +547,8 @@ function measureData(element) {
     options[node.name] = node.dataset.option === "json" ? parsePoints(element, node.name) :
       node.dataset.option === "number" ? Number(node.value) : node.value;
   }
+  const stable = selectMany(element, "reference_marks");
+  if (stable.length) options.reference_marks = stable;
   return {
     tool: model.tool, capture: model.capture, native: !model.plane,
     title: value(element, "title") || undefined, options

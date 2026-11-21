@@ -66,7 +66,7 @@ def map_colors(surface, values, accepted, limits, color=(48, 181, 165), *, highl
     return Image.fromarray(np.uint8(np.clip(base, 0, 255)), "RGB")
 
 
-def signed_map(surface, values, accepted, scale, unknown):
+def signed_map(surface, values, accepted, scale, unknown, outside=None, outside_color=(181, 132, 190)):
     normalized = values / max(1e-8, scale)
     base = np.asarray(canvas_picture(surface).convert("RGB"), dtype=np.float32)
     positive = accepted & (values >= 0)
@@ -77,6 +77,11 @@ def signed_map(surface, values, accepted, scale, unknown):
     hatch = unknown & ((np.indices(values.shape).sum(axis=0) % 8) <= 2)
     base[unknown] *= .56
     base[hatch] = PALETTE["unknown"]
+    if outside is not None and outside.any():
+        lattice = np.indices(values.shape).sum(axis=0)
+        cross_hatch = outside & ((lattice % 11 <= 2) | ((lattice + 6) % 11 <= 2))
+        base[outside] *= .48
+        base[cross_hatch] = outside_color
     return Image.fromarray(np.uint8(np.clip(base, 0, 255)), "RGB")
 
 
