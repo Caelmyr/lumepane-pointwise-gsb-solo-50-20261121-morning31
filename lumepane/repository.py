@@ -15,6 +15,7 @@ from .contracts import DeskError, Missing, Stale, now
 KINDS = frozenset({
     "windows", "captures", "marks", "alignments", "treatments",
     "reports", "references", "packets", "received", "alignment_checks", "condition_sheets", "intake_sessions", "intake_files",
+    "resurvey_plans",
 })
 MEDIA_LABELS = frozenset({
     "original", "working", "thumbnail", "map", "photo", "plane", "source",
@@ -250,6 +251,10 @@ class Query:
             "INSERT INTO assets VALUES (?,?,?,?,?)", (owner, label, handle, mime, len(payload)),
         )
         return self.asset(owner, label)
+
+    def replace_asset(self, owner, label, payload, mime):
+        self.db.execute("DELETE FROM assets WHERE owner = ? AND label = ?", (owner, label))
+        return self.attach(owner, label, payload, mime)
 
     def asset(self, owner, label):
         row = self.db.execute("SELECT * FROM assets WHERE owner=? AND label=?", (owner, label)).fetchone()

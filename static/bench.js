@@ -15,7 +15,7 @@ const categories = {
 const states = { observed: "Observed", review: "Needs review", resolved: "Resolved" };
 const tabs = {
   capture: "Photographs", align: "Register", mark: "Markings", measure: "Examinations",
-  compare: "Compare", evidence: "Evidence", visits: "Visit log"
+  compare: "Compare", resurvey: "Reshoot plan", evidence: "Evidence", visits: "Visit log"
 };
 const model = {
   list: [], item: null, capture: null, tab: "capture", tool: "exposure", display: null, marks: true,
@@ -199,7 +199,9 @@ function windowView() {
     '<nav class="tabs" aria-label="Examination desk">' +
     Object.entries(tabs).map(([key, label]) => '<button type="button" data-action="tab" data-id="' + key +
       '"' + current(key === model.tab) + ">" + label + "</button>").join("") + "</nav>" +
-    '<div class="workspace">' + boardView(item) + '<aside class="panel inspect" id="inspector"></aside></div>';
+    '<div class="workspace' + (model.tab === "resurvey" ? " single" : "") + '">' +
+    (model.tab === "resurvey" ? '<div id="resurvey-workspace"></div>' : boardView(item)) +
+    '<aside class="panel inspect" id="inspector"></aside></div>';
   const view = photo();
   const image = document.getElementById("active-picture");
   if (image) image.addEventListener("load", drawPoints);
@@ -251,10 +253,11 @@ function drawPoints() {
 function setInspector() {
   const holder = document.getElementById("inspector");
   if (!holder) return;
-  const general = { evidence: evidencePane, visits: visitPane };
+  const general = { evidence: evidencePane, visits: visitPane, resurvey: resurveyPane };
   const photographic = { capture: capturePane, align: alignmentPane, mark: markPane, measure: measurePane, compare: comparePane };
   holder.innerHTML = "<h2>" + escapeHtml(tabs[model.tab]) + "</h2>" +
     (general[model.tab]?.() ?? (photo() ? photographic[model.tab]?.() : empty("Add a photograph to use this workspace.")));
+  if (model.tab === "resurvey") renderResurveyWorkspace();
 }
 
 function capturePane() {
@@ -412,6 +415,100 @@ function visitPane() {
       "</article>", "No dated entries.") + (model.item.conditions.length ? '<h3>Condition sheets</h3>' +
       listCards(model.item.conditions, item => '<article class="list-item"><strong>' + escapeHtml(item.title) + "</strong>" +
         controls(button("Open condition sheet", "view-record", "", item.id)) + "</article>", "") : "");
+}
+
+const resurveyLights = { transmitted: "Transmitted light", reflected: "Reflected front" };
+model.resurvey = {
+  targets: new Set(), frameW: 120, frameH: 95, minGap: 4, readability: 0.8,
+  lights: { transmitted: true, reflected: true },
+  budget: { transmitted: 2, reflected: 2 }, previewId: null, editing: null,
+};
+
+function resurveyPane() {
+  const state = model.resurvey;
+  const marks = model.item.marks.filter(item => !item.retired);
+  if (!currentWindow()?.physical_mm) {
+    return empty("Record the physical window dimensions (Edit window) before planning real frame coverage.");
+  }
+  const registered = Object.fromEntries(Object.keys(resurveyLights).map(light => [
+    light, model.item.captures.some(c => c.alignment && c.role === light),
+  ]));
+  const targetList = marks.length ? '<div class="check-list">' + marks.map(mark =>
+    '<label class="check"><input type="checkbox" name="targets" value="' + attr(mark.id) + '"' +
+    (state.targets.has(mark.id) ? " checked" : "") + ">" + escapeHtml(mark.title) +
+    ' <small>' + escapeHtml(categories[mark.category]) + "</small></label>").join("") + "</div>" :
+    empty("Draw and save marked regions first; the plan chooses among them.");
+  const lightControls = Object.entries(resurveyLights).map(([key, label]) =>
+    '<div class="plan-light"><label class="check"><input type="checkbox" name="light-' + key + '"' +
+    (state.lights[key] ? " checked" : "") + ">" + escapeHtml(label) + "</label>" +
+    '<label class="inline">Shots left<input type="number" name="budget-' + key + '" min="0" max="60" step="1" required value="' +
+    state.budget[key] + '"></label>' +
+    '<small>' + (registered[key] ? "Registered photographs available" : "No registered photograph yet") + "</small></div>").join("");
+  return '<p class="help">Choose the marked priority regions for the next visit and the lighting each needs. ' +
+    "Gaps are measured where the current registered photographs are out of frame, masked, dark, or clipped.</p>" +
+    form("resurvey", input("Plan title", "title", "text", state.editing?.title || "Follow-up reshoot plan", 'maxlength="100" required') +
+      "<h3>Priority regions</h3>" + targetList +
+      "<h3>Lighting and remaining shots</h3>" + lightControls +
+      "<h3>One photograph covers on the window</h3>" +
+      row(input("Frame width (mm)", "frameW", "number", state.frameW, 'min="5" max="12000" step="any" required'),
+        input("Frame height (mm)", "frameH", "number", state.frameH, 'min="5" max="12000" step="any" required')) +
+      row(input("Minimum gap to plan (mm²)", "minGap", "number", state.minGap, 'min="0.01" step="any" required'),
+        input("Readable coverage target", "readability", "number", state.readability, 'min="0.05" max="1" step="any" required')) +
+      controls(button("Preview plan map", "preview-resurvey"),
+        submit(state.editing ? "Save revised plan" : "Save plan")) +
+      (state.editing ? controls(button("Start a new plan", "new-resurvey")) : "")) +
+    listCards(model.item.resurvey_plans, item => '<article class="list-item"><strong>' + escapeHtml(item.title) +
+      "</strong><small>" + escapeHtml(item.frames.length + " planned frames · " +
+      item.requested_lights.map(light => resurveyLights[light]).join(" / ")) + "</small>" +
+      controls(button("Open plan", "view-record", "", item.id), button("Revise plan", "edit-resurvey", "", item.id),
+        link("CSV", "/api/resurvey-plans/" + item.id + "/data.csv")) + "</article>", "No saved reshoot plans yet.");
+}
+
+function resurveyFormData(element) {
+  const state = model.resurvey;
+  return {
+    title: value(element, "title"),
+    targets: selectMany(element, "targets"),
+    lights: Object.fromEntries(Object.keys(resurveyLights).map(key => [key, checked(element, "light-" + key)])),
+    remaining_shots: Object.fromEntries(Object.keys(resurveyLights).map(key => [key, number(element, "budget-" + key)])),
+    frame_coverage_mm: [number(element, "frameW"), number(element, "frameH")],
+    minimum_gap_mm2: number(element, "minGap"),
+    readability_fraction: number(element, "readability"),
+    version: state.editing?.version,
+    window_id: currentWindow().id,
+  };
+}
+
+function renderResurveyWorkspace() {
+  const holder = document.getElementById("resurvey-workspace");
+  if (!holder) return;
+  const state = model.resurvey;
+  const previewUrl = state.previewObjectUrl ||
+    (state.previewId ? imageSource(state.previewId, "map") + "?v=" + (state.editing?.version || 0) : null);
+  const plan = state.editing;
+  const frameCards = plan ? plan.frames.map(frame => '<article class="plan-frame"><strong>' +
+    escapeHtml(frame.code + " · " + frame.lighting_label) + "</strong><small>" +
+    escapeHtml(frame.frame_size_mm.join(" × ") + " mm of a " + frame.coverage_capacity_mm.join(" × ") + " mm frame") +
+    "</small><p>" + escapeHtml(frame.target_titles.join("; ")) + "</p></article>").join("") : "";
+  const targetRows = plan ? plan.targets.map(target => {
+    const cells = plan.requested_lights.map(light => {
+      const reading = target.lights[light];
+      if (!reading) return "<td>not requested</td>";
+      return '<td class="' + (reading.scheduled ? "scheduled" : reading.needs_followup ? "unscheduled" : "covered") + '">' +
+        escapeHtml(resurveyLights[light]) + "<br><small>" + reading.readable_percent + "% readable · " +
+        reading.gap_mm2 + " mm² gap · " + (reading.scheduled ? "scheduled" : reading.needs_followup ? "not scheduled" : "covered") +
+        "</small></td>";
+    }).join("");
+    return "<tr><td>" + escapeHtml(target.title) + "</td>" + cells + "</tr>";
+  }).join("") : "";
+  holder.innerHTML = '<section class="panel"><div class="section-head"><h2>' +
+    escapeHtml(plan ? plan.title : "Reshoot plan preview") + '</h2><span class="tag">Gaps counted separately per lighting</span></div>' +
+    (previewUrl ? '<figure class="plan-map"><img src="' + previewUrl + '" alt="Planned follow-up coverage on the window plane"></figure>' :
+      '<p class="empty">Set the regions, frame coverage and remaining shots, then preview the plan. Solid rectangles are planned frames; dashed rectangles remain unscheduled.</p>') +
+    (plan ? '<h3>Planned frames</h3><div class="plan-grid">' + (frameCards || empty("No frames fit the remaining shot budget.")) + "</div>" +
+      '<h3>Priority region coverage</h3><div class="table-wrap"><table class="plan-table"><thead><tr><th>Marked region</th>' +
+      plan.requested_lights.map(light => '<th>' + escapeHtml(resurveyLights[light]) + "</th>").join("") +
+      "</tr></thead><tbody>" + targetRows + "</tbody></table></div>" : "") + "</section>";
 }
 
 function details(data) {
@@ -672,6 +769,30 @@ const clicks = {
   "pick-profile"() { pointStart("profile"); },
   "pick-mark"() { pointStart("mark"); },
   "pick-survey"() { pointStart("survey"); },
+  "new-resurvey"() {
+    model.resurvey.editing = null;
+    model.resurvey.previewId = null;
+    setInspector();
+    renderResurveyWorkspace();
+  },
+  "edit-resurvey"(key) {
+    const plan = model.item.resurvey_plans.find(item => item.id === key);
+    const state = model.resurvey;
+    state.editing = plan;
+    state.previewId = key;
+    state.previewObjectUrl = null;
+    state.targets = new Set(plan.targets.map(item => item.mark));
+    state.frameW = plan.frame_coverage_mm[0];
+    state.frameH = plan.frame_coverage_mm[1];
+    state.minGap = plan.minimum_gap_mm2;
+    state.readability = plan.readability_fraction;
+    state.lights = Object.fromEntries(Object.keys(resurveyLights).map(light => [light, plan.requested_lights.includes(light)]));
+    for (const light of Object.keys(resurveyLights)) {
+      state.budget[light] = plan.remaining_shots[light];
+    }
+    model.tab = "resurvey";
+    windowView();
+  },
   "clear-points"() {
     model.points = [];
     const key = { mark: "mark", measure: "report", align: "alignment" }[model.tab];
@@ -966,6 +1087,21 @@ document.addEventListener("change", event => {
     document.getElementById("measure-options").innerHTML = measureOptions();
     syncBoard();
   }
+  if (event.target.closest('[data-form="resurvey"]')) {
+    const form = findForm("resurvey");
+    const state = model.resurvey;
+    if (event.target.name === "targets") {
+      state.targets = new Set(selectMany(form, "targets"));
+    }
+    for (const light of Object.keys(resurveyLights)) {
+      if (event.target.name === "light-" + light) state.lights[light] = event.target.checked;
+      if (event.target.name === "budget-" + light) state.budget[light] = Number(event.target.value);
+    }
+    const numeric = { frameW: "frameW", frameH: "frameH", minGap: "minGap", readability: "readability" };
+    for (const [name, key] of Object.entries(numeric)) {
+      if (event.target.name === name && event.target.value !== "") state[key] = Number(event.target.value);
+    }
+  }
 });
 window.addEventListener("hashchange", () => refreshRoute().catch(error => showError(error, mount)));
 window.addEventListener("resize", drawPoints);
@@ -1031,6 +1167,22 @@ clicks["new-condition"] = () => {
       checkbox("Include archived visits", "include_archived") +
       checklist("Specific visits (empty uses date range)", "visits", model.item.visits) + submit("Save condition sheet")));
 };
+clicks["preview-resurvey"] = async () => {
+  const element = findForm("resurvey");
+  if (!element.reportValidity()) return;
+  const payload = resurveyFormData(element);
+  if (!payload.targets.length) return flash("Choose at least one marked priority region.", true);
+  const blob = await request(underWindow("/resurvey-plans/preview"), "POST", payload, true);
+  const state = model.resurvey;
+  const url = URL.createObjectURL(blob);
+  model.blobUrls.push(url);
+  state.previewObjectUrl = url;
+  state.previewId = null;
+  renderResurveyWorkspace();
+  const image = document.querySelector("#resurvey-workspace .plan-map img");
+  if (image) image.src = url;
+  flash("Plan preview ready. Save the plan to keep and export it.");
+};
 forms["stage-intake"] = async element => {
   const result = await request(underWindow("/intake"), "POST", new FormData(element));
   await refreshWindow();
@@ -1065,4 +1217,22 @@ forms["new-condition"] = async element => {
   model.opened = result;
   showRecord(result);
   return "Condition sheet saved.";
+};
+forms.resurvey = async element => {
+  const state = model.resurvey;
+  const payload = resurveyFormData(element);
+  if (!payload.targets.length) throw new Error("Choose at least one marked priority region.");
+  let result;
+  if (state.editing) {
+    result = await request("/resurvey-plans/" + state.editing.id, "PUT", payload);
+  } else {
+    result = await request(underWindow("/resurvey-plans"), "POST", payload);
+  }
+  state.editing = result;
+  state.previewId = result.id;
+  state.previewObjectUrl = null;
+  await refreshWindow();
+  state.editing = model.item.resurvey_plans.find(item => item.id === result.id);
+  renderResurveyWorkspace();
+  return "Reshoot plan saved. The map and CSV are ready to take away.";
 };

@@ -17,7 +17,8 @@ For a source checkout with Python 3.11 and the packages in `requirements.txt`, r
 5. In **Examinations**, inspect exposure and readability, measured and overlapping pane regions, inside edges, came strips, fracture candidates, recorded traces, line profiles, texture spectra, transmitted-light ratios, paired-light detail, and photographed color. Select **Preview map** to see the result, or save it to open the evidence images and CSV.
 6. In **Compare**, view registered photos with a divider or checkerboard. **Measure visit change** uses captures from the same lighting role and reports areas with enough support for a comparison.
 7. In **Visit log**, link dated notes to the versions of observations and examinations you inspected. Create a condition sheet to review the pinned versions together.
-8. In **Evidence**, create a contact PDF, a full evidence ZIP, or a scaled detail proof. A received evidence ZIP can be opened in **Received evidence**. Digests verify data in the library. Print scale proofs at 100% and measure the printed 20 mm ruler.
+8. In **Reshoot plan**, choose marked priority regions for the next visit and say whether each needs transmitted or reflected light. Enter the real window area a single photograph can cover and the shots remaining per lighting. The plan measures what the registered photos actually resolve (in frame, not excluded, neither dark nor clipped), groups nearby same-light gaps into one frame, counts the two lightings separately against the shot budget, and draws planned frames together with any still-unscheduled gaps on the window plane. Save it to keep the map and CSV for the visit.
+9. In **Evidence**, create a contact PDF, a full evidence ZIP, or a scaled detail proof. A received evidence ZIP can be opened in **Received evidence**. Digests verify data in the library. Print scale proofs at 100% and measure the printed 20 mm ruler.
 
 ## Image handling
 

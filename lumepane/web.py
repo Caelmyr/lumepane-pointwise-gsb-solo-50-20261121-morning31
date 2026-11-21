@@ -21,6 +21,7 @@ from .exposure import readout_probe
 from .imaging import encode
 from .reports import TITLE_FOR, approve_swatch, build_report, evidence_overview, library_view, report_csv, retire_reference
 from .repository import Library
+from .resurvey import create_plan, plan_csv, plan_list, prepare_plan, revise_plan
 from .visitlog import save_visit, timeline, visit_notes
 from .workflows import workflow_api
 
@@ -224,6 +225,33 @@ def build_api(library):
     @api.get("/windows/<key>/visits")
     def visits(key):
         return jsonify(timeline(library, identifier(key), retired=request.args.get("archived") == "1"))
+
+    @api.get("/windows/<key>/resurvey-plans")
+    def resurvey_plans(key):
+        return jsonify(plan_list(library, identifier(key)))
+
+    @api.post("/windows/<key>/resurvey-plans")
+    def resurvey_plan_save(key):
+        with heavy:
+            return jsonify(create_plan(library, identifier(key), readable_body())), 201
+
+    @api.post("/windows/<key>/resurvey-plans/preview")
+    def resurvey_plan_preview(key):
+        with heavy:
+            _, map_image = prepare_plan(library, identifier(key), readable_body())
+            return picture(map_image)
+
+    @api.put("/resurvey-plans/<key>")
+    def resurvey_plan_edit(key):
+        with heavy:
+            return jsonify(revise_plan(library, identifier(key), readable_body()))
+
+    @api.get("/resurvey-plans/<key>/data.csv")
+    def resurvey_plan_data(key):
+        with library.use() as db:
+            entry = db.one(identifier(key), "resurvey_plans")
+        return send_file(BytesIO(plan_csv(entry)), mimetype="text/csv",
+                         download_name="resurvey-plan.csv", as_attachment=True)
 
     @api.patch("/visits/<key>")
     def visit_edit(key):

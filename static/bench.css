@@ -131,6 +131,22 @@ dialog p { margin-top: 6px; }
 dialog form { margin-top: 14px; }
 .check-list { display: grid; max-height: 180px; overflow: auto; gap: 5px; }
 .check-list label { border-bottom: 1px solid var(--line); padding: 4px 0; }
+.plan-light { display: grid; gap: 6px; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: #fbf8f0; }
+.plan-light small { color: var(--muted); }
+label.inline { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+label.inline input { width: 90px; }
+.plan-map { margin: 0 0 16px; }
+.plan-map img { width: 100%; height: auto; border-radius: 4px; border: 1px solid var(--line); }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; margin: 10px 0 18px; }
+.plan-frame { border: 1px solid var(--line); border-left: 4px solid #63a4bd; border-radius: 4px; padding: 10px 12px; background: #fbf8f0; display: grid; gap: 4px; }
+.plan-frame small, .plan-frame p { color: var(--muted); font-size: 12px; margin: 0; }
+.table-wrap { overflow-x: auto; }
+.plan-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.plan-table th, .plan-table td { text-align: left; padding: 8px 9px; border-bottom: 1px solid var(--line); vertical-align: top; min-width: 150px; }
+.plan-table th { color: var(--muted); font-weight: 650; }
+.plan-table td.scheduled { background: #e4efe6; }
+.plan-table td.unscheduled { background: #f6e3da; }
+.plan-table td.covered { background: #f1ede2; }
 @media (max-width: 1100px) {
   .shell { grid-template-columns: 174px minmax(0, 1fr); }
   .rail { padding: 28px 12px 20px; }
