@@ -8,6 +8,7 @@ from .catalog import capture_context
 from .cames import came_report
 from .compare import visit_comparison
 from .contracts import DeskError, enum, flag, identifier, identifiers, obj, revision, word
+from .crackpath import crack_path_map
 from .exposure import exposure_audit
 from .fracture import fracture_candidates, manual_trace_summary
 from .glasscolor import color_summary, swatch_records
@@ -25,6 +26,7 @@ SINGLE = {
     "neighbours": ("Adjacent pane marks", overlap_attrib),
     "came": ("Came strip examination", came_report),
     "fracture": ("Fine fracture candidates", fracture_candidates),
+    "fracture-path": ("Crack path review map", crack_path_map),
     "trace-log": ("Pinned fracture traces", manual_trace_summary),
     "profile": ("Optical line profile", line_profile),
     "grain": ("Glass texture spectrum", texture_report),

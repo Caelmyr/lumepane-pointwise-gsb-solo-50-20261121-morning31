@@ -114,6 +114,7 @@ def fracture_field(ctx, settings):
         "selection": selection, "eligible": eligible, "came": came,
         "response": response, "threshold": threshold, "ridge_support": support,
         "detections": active, "line_contrast": high,
+        "signal": signal, "core": core, "visible": visible,
     }
 
 
@@ -164,6 +165,7 @@ def candidates_for(ctx, signal, settings):
     boxes = ndimage.find_objects(labels)
     listed = []
     map_mask = np.zeros(labels.shape, dtype=bool)
+    index_image = np.zeros(labels.shape, dtype=np.int32)
     extent = ctx.surface.extent
     known = signal["ridge_support"]
     marked = [m for m in ctx.marks if m["category"] == "fracture"]
@@ -185,8 +187,9 @@ def candidates_for(ctx, signal, settings):
         data = signal["response"][local][zone]
         original_change = signal["line_contrast"][local][zone]
         width, height = extent
+        idx = len(listed) + 1
         listed.append(result | {
-            "index": len(listed) + 1,
+            "index": idx,
             "response_p05_p50_p95": percentile(data),
             "signed_center_contrast": round(float(np.median(original_change)), 6),
             "sample_pixels": int(len(x)),
@@ -197,7 +200,8 @@ def candidates_for(ctx, signal, settings):
             "source_marks": list(observation_match(width, height, territory, marked)),
         })
         map_mask |= territory
-    return listed, map_mask, len(accepted)
+        index_image[territory] = idx
+    return listed, map_mask, len(accepted), index_image
 
 
 def label_candidates(picture, found):
@@ -213,7 +217,7 @@ def label_candidates(picture, found):
 def fracture_candidates(ctx, raw):
     settings = FractureSettings.parse(raw)
     field = fracture_field(ctx, settings)
-    candidates, marked, raw_count = candidates_for(ctx, field, settings)
+    candidates, marked, raw_count, _ = candidates_for(ctx, field, settings)
     classes = np.zeros(marked.shape, dtype=np.uint8)
     classes[field["selection"] & ~field["eligible"]] = 1
     classes[field["selection"] & field["came"]] = 2

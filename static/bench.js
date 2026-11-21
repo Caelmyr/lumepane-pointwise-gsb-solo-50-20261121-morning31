@@ -311,6 +311,7 @@ function markPane() {
 const methods = {
   exposure: "Exposure and readability", panes: "Visible glass inventory", rim: "Inside edge condition",
   neighbours: "Adjacent pane marks", came: "Came strip examination", fracture: "Fine fracture candidates",
+  "fracture-path": "Crack path review map",
   "trace-log": "Pinned fracture traces", profile: "Optical line profile", grain: "Glass texture spectrum",
   transmission: "Transmitted-light ratio", paired_detail: "Surface detail across lights",
   color: "Photographed glass color", visit: "Registered visit comparison"
@@ -334,6 +335,7 @@ function measureOptions() {
       return numericOption("Strip half width (pixels)", "half_width", 12, 2, 35) +
         numericOption("Sampling step (pixels)", "step", 5, 1, 35);
     case "fracture":
+    case "fracture-path":
     case "grain":
       return boxOption();
     case "profile":
