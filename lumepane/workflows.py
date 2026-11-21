@@ -1,6 +1,7 @@
 """Image intake and independently reviewable examinations."""
 
 from io import BytesIO
+import json
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -9,6 +10,10 @@ from .conditions import condition_csv, condition_list, freeze_conditions
 from .contracts import identifier
 from .intake import intake_csv, intake_import, open_session, session_list, stage_upload, staged_page_picture
 from .source_reading import capture_receipt, receipt_csv
+from .transfer import (
+    commit_transfer, landmark_board, review_list, revise_review, save_review,
+    transfer_csv, transfer_history, transfer_preview,
+)
 
 
 def downloadable(data, name):
@@ -95,5 +100,45 @@ def workflow_api(library, picture, readable_body, heavy):
         with heavy:
             record = capture_receipt(library, identifier(key))
         return downloadable(receipt_csv(record), "original-photograph-check.csv")
+
+    @bench.post("/windows/<key>/frame-transfer/preview")
+    def frame_transfer_preview(key):
+        with heavy:
+            payload, map_image, _ = transfer_preview(library, identifier(key), readable_body())
+            response = picture(map_image)
+            response.headers["X-Transfer-Payload"] = json.dumps(payload)
+            return response
+
+    @bench.post("/windows/<key>/frame-transfer/landmarks")
+    def frame_transfer_landmarks(key):
+        with heavy:
+            return picture(landmark_board(library, identifier(key), readable_body()))
+
+    @bench.post("/windows/<key>/frame-transfer")
+    def frame_transfer_commit(key):
+        with heavy:
+            return jsonify(commit_transfer(library, identifier(key), readable_body())), 201
+
+    @bench.get("/windows/<key>/frame-transfer")
+    def frame_transfer_history(key):
+        return jsonify(transfer_history(library, identifier(key)))
+
+    @bench.get("/frame-transfers/<key>/data.csv")
+    def frame_transfer_download(key):
+        with library.use() as db:
+            item = db.one(identifier(key), "frame_transfers")
+        return downloadable(transfer_csv(item), "frame-transfer.csv")
+
+    @bench.post("/windows/<key>/transfer-reviews")
+    def transfer_review_save(key):
+        return jsonify(save_review(library, identifier(key), readable_body())), 201
+
+    @bench.get("/windows/<key>/transfer-reviews")
+    def transfer_review_list(key):
+        return jsonify(review_list(library, identifier(key)))
+
+    @bench.patch("/transfer-reviews/<key>")
+    def transfer_review_edit(key):
+        return jsonify(revise_review(library, identifier(key), readable_body()))
 
     return bench

@@ -16,6 +16,7 @@ from .catalog import (
 from .compare import comparator_wipe
 from .contracts import DeskError, MAX_IMAGE_BYTES, identifier, obj
 from .demo import demo_library, showcase
+from .demo_transfer import LANDMARKS, frame_transfer_demo
 from .evidence import MAX_ARCHIVE_BYTES, freeze_packet, receive_archive, received_view, scale_print
 from .exposure import readout_probe
 from .imaging import encode
@@ -88,6 +89,12 @@ def build_api(library):
     def training():
         with heavy:
             return jsonify({"windows": demo_library(library)}), 201
+
+    @api.post("/frame-transfer-demonstration")
+    def frame_transfer_training():
+        with heavy:
+            windows = frame_transfer_demo(library)
+            return jsonify({"windows": windows, "landmarks": LANDMARKS}), 201
 
     @api.get("/windows")
     def windows():

@@ -131,6 +131,27 @@ dialog p { margin-top: 6px; }
 dialog form { margin-top: 14px; }
 .check-list { display: grid; max-height: 180px; overflow: auto; gap: 5px; }
 .check-list label { border-bottom: 1px solid var(--line); padding: 4px 0; }
+.transfer-tabs { margin-top: -8px; }
+.landmark-grid { display: grid; gap: 6px; margin: 10px 0; }
+.landmark-row { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(150px, 1fr) minmax(150px, 1fr) auto; gap: 7px; align-items: center; }
+.landmark-row.head { font-size: 11px; color: var(--muted); font-weight: 650; }
+.landmark-row.head span:last-child { min-width: 74px; }
+.transfer-board { margin-top: 14px; }
+.transfer-board img, .transfer-map img { width: 100%; height: auto; border-radius: 4px; display: block; }
+.transfer-map { padding: 0; overflow: hidden; margin: 12px 0; }
+.transfer-actions { margin: 12px 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.transfer-row { border-left: 4px solid var(--line); padding-left: 11px; border-radius: 3px; }
+.transfer-row.ready { border-left-color: #5d9c88; }
+.transfer-row.review { border-left-color: #c98f4b; }
+.transfer-row-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+.transfer-row-head .check { flex-direction: row; align-items: center; }
+.tag.status-ready { color: #3f7a68; font-weight: 650; }
+.tag.status-review { color: #a06a2e; font-weight: 650; }
+.transfer-row .reasons { color: #91483c; }
+@media (max-width: 630px) {
+  .landmark-row { grid-template-columns: 1fr 1fr; }
+  .landmark-row.head { display: none; }
+}
 @media (max-width: 1100px) {
   .shell { grid-template-columns: 174px minmax(0, 1fr); }
   .rail { padding: 28px 12px 20px; }

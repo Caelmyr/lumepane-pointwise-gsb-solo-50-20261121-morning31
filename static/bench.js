@@ -20,7 +20,13 @@ const tabs = {
 const model = {
   list: [], item: null, capture: null, tab: "capture", tool: "exposure", display: null, marks: true,
   plane: true, active: null, pointMode: null, points: [], blobUrls: [], editingMark: null, opened: null,
-  tools: {}, selectedPair: "", probe: null, epoch: 0
+  tools: {}, selectedPair: "", probe: null, epoch: 0,
+  transfer: {
+    view: null, oldCapture: "", newCapture: "", landmarks: [], includeRetired: false,
+    supportFloor: .98, title: "Frame transfer preview", preview: null, mapUrl: null,
+    landmarkUrl: null, selected: new Set(), sessions: [], reviews: [], reviewDraft: {},
+    pendingPrefill: null,
+  },
 };
 const today = () => new Date().toISOString().slice(0, 10);
 const title = text => String(text || "").replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
@@ -142,7 +148,8 @@ function collectionView() {
       button("New window", "new-window", "primary")) +
     '<section class="hero"><div class="hero-inner"><h2>Examine glass under changing light</h2>' +
     "<p>Load a synthetic panel with multiple lighting views, marked observations, and two inspection dates.</p>" +
-    button("Load demonstration", "demo", "brass") + "</div></section>" +
+    controls(button("Load demonstration", "demo", "brass"),
+      button("Load re-framing scenario", "frame-demo", "brass")) + "</div></section>" +
     '<section class="collection-section"><div class="section-head"><h2>Cataloged windows</h2><span>' +
     model.list.length + " records</span></div>" + (grid ? '<div class="deck">' + grid + "</div>" :
       empty("Create a window record to begin, or load the demonstration above.")) + "</section>";
@@ -194,7 +201,8 @@ function windowView() {
   const description = [win.code, win.location, win.physical_mm?.join(" × ") && win.physical_mm.join(" × ") + " mm",
     win.synthetic ? "Synthetic demonstration" : ""].filter(Boolean).join(" · ");
   mount.innerHTML = pageHeading(win.title, description,
-    controls(button("Edit window", "edit-window"), button("Photo intake", "intake"), button("Add photograph", "add-photo", "primary")),
+    controls(button("Edit window", "edit-window"), button("Photo intake", "intake"),
+      button("Frame transfer", "open-transfer"), button("Add photograph", "add-photo", "primary")),
     '<a href="#collection">Window collection</a> / Examination desk') +
     '<nav class="tabs" aria-label="Examination desk">' +
     Object.entries(tabs).map(([key, label]) => '<button type="button" data-action="tab" data-id="' + key +
@@ -450,6 +458,175 @@ function renderResult(item) {
     button("Open result", "view-record", "", item.id) + "</div>" + details(item.reading || item.measure || item) + "</section>";
 }
 
+function transferCaptureOptions() {
+  const registered = model.item.captures.filter(item => item.alignment);
+  return photoOptions(registered, "Choose a registered photograph");
+}
+
+function transferNav() {
+  const t = model.transfer;
+  const items = [
+    ["setup", "1 · Landmarks"], ["preview", "2 · Projected observations"],
+    ["holds", "3 · Review holds"], ["sessions", "Saved transfers"],
+  ];
+  return '<nav class="tabs transfer-tabs" aria-label="Frame transfer steps">' +
+    items.map(([key, label]) => '<button type="button" data-action="transfer-tab" data-id="' + key +
+      '"' + current(t.view === key) + ">" + label + "</button>").join("") + "</nav>";
+}
+
+function landmarkRows() {
+  const t = model.transfer;
+  if (!t.landmarks.length) {
+    t.landmarks = [{ name: "Landmark 1", old: [.25, .25], new: [.25, .25] },
+      { name: "Landmark 2", old: [.75, .25], new: [.75, .25] },
+      { name: "Landmark 3", old: [.75, .75], new: [.75, .75] },
+      { name: "Landmark 4", old: [.25, .75], new: [.25, .75] }];
+  }
+  return t.landmarks.map((pair, index) => {
+    const oldValue = JSON.stringify(pair.old);
+    const newValue = JSON.stringify(pair.new);
+    return '<div class="landmark-row">' +
+      '<input aria-label="Landmark name" data-landmark="' + index + '" data-key="name" value="' + attr(pair.name) + '">' +
+      '<input aria-label="Old plane x,y" data-landmark="' + index + '" data-key="old" value="' + attr(oldValue) + '">' +
+      '<input aria-label="New plane x,y" data-landmark="' + index + '" data-key="new" value="' + attr(newValue) + '">' +
+      button("Remove", "remove-landmark", "", index) + "</div>";
+  }).join("");
+}
+
+function transferSetupPane() {
+  const t = model.transfer;
+  return '<section class="panel"><h2>Shared landmarks across the two frames</h2>' +
+    '<p class="help">Pick the same recognisable glass features on the old and new registered photographs. ' +
+    'Coordinates are normalized window-plane positions; four to twelve well-spread pairs fit the projective mapping.</p>' +
+    form("transfer-setup",
+      row(selector("Old framed photograph", "old_capture", transferCaptureOptions(), t.oldCapture),
+        selector("New replacement-frame photograph", "new_capture", transferCaptureOptions(), t.newCapture)) +
+      '<div class="landmark-grid" role="table"><div class="landmark-row head" role="row">' +
+      "<span>Landmark</span><span>Old photo [x, y]</span><span>New photo [x, y]</span><span></span></div>" +
+      '<div id="landmark-rows">' + landmarkRows() + "</div></div>" +
+      controls(button("Add landmark pair", "add-landmark")) +
+      row(input("Support floor for a clean carry-over", "support_floor", "number", t.supportFloor,
+        'min=".5" max="1" step=".01" required'),
+        '<label class="check">Include archived observations<input type="checkbox" name="include_retired"' +
+        (t.includeRetired ? " checked" : "") + "></label>") +
+      input("Transfer title", "title", "text", t.title, 'maxlength="110"') +
+      controls(button("Preview projection", "transfer-preview", "primary"),
+        button("Show landmark boards", "transfer-landmarks"))) +
+    '<div id="landmark-board" class="transfer-board"></div></section>';
+}
+
+function supportCell(row) {
+  const s = row.support;
+  if (s.shape === "polygon") {
+    return (s.photographed_fraction != null ? (s.photographed_fraction * 100).toFixed(1) + "% photographed" : "No pixels")
+      + (s.usable_fraction != null ? " · " + (s.usable_fraction * 100).toFixed(1) + "% usable" : "");
+  }
+  return "Trace vertices supported: " + Math.round((s.vertex_support || 0) * 100) + "%";
+}
+
+function transferPreviewPane() {
+  const t = model.transfer;
+  if (!t.preview) {
+    return '<section class="panel">' + empty("Choose the two photographs and landmark pairs, then preview the projection.") + "</section>";
+  }
+  const p = t.preview;
+  const rows = p.observations.map((row, index) => {
+    const ready = row.status === "ready";
+    const checked = ready && t.selected.has(row.mark_id);
+    return '<article class="list-item transfer-row ' + row.status + '" data-row="' + index + '">' +
+      '<div class="transfer-row-head"><label class="check"><input type="checkbox" data-transfer-check="' + attr(row.mark_id) +
+      '"' + (checked ? " checked" : "") + (ready ? "" : " disabled") + "><strong>" + escapeHtml(row.title) +
+      '</strong></label><span class="tag status-' + row.status + '">' + (ready ? "Ready" : "Hold for review") + "</span></div>" +
+      "<small>" + escapeHtml(row.kind_label + " · " + row.state_label + (row.retired ? " · Archived" : "")) + "</small>" +
+      (row.reason_labels.length ? '<small class="reasons">' + row.reason_labels.map(escapeHtml).join(" · ") + "</small>" : "") +
+      '<small>' + escapeHtml(supportCell(row)) + "</small>" +
+      '<div class="actions">' +
+      button("Open old observation", "open-old-mark", "", row.mark_id) +
+      (ready ? button("Carry over", "carry-one", "", row.mark_id)
+             : button("Save review hold", "hold-one", "", row.mark_id)) + "</div></article>";
+  }).join("");
+  return '<section class="panel"><div class="section-head"><h2>Projected positions on the new frame</h2>' +
+    "<span>" + p.totals.ready + " ready · " + p.totals.review + " hold · " + p.totals.considered + " considered</span></div>" +
+    '<p class="help">Ready observations are fully inside the new boundary and photographed support. Holds cross the edge, ' +
+    "meet an occlusion or exclusion, or lose image support.</p>" +
+    '<figure class="panel transfer-map"><img alt="Transfer preview map" src="' + t.mapUrl + '"></figure>' +
+    '<div class="transfer-actions">' + controls(
+      button("Select all ready", "select-all-ready"),
+      button("Save selected as new observations", "carry-selected", "primary")) + "</div>" +
+    '<div class="record-list">' + rows + "</div></section>";
+}
+
+function transferHoldsPane() {
+  const t = model.transfer;
+  const cards = t.reviews.length ? t.reviews.map(item => '<article class="list-item"><strong>' +
+    escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.reason) + " · " +
+    escapeHtml(title(item.status)) + "</small><p>" + escapeHtml(item.notes || "No notes yet.") + "</p>" +
+    controls(button("Open source observation", "open-old-mark", "", item.source_mark),
+      item.status === "open" ? button("Mark resolved", "resolve-hold", "", item.id) :
+        button("Reopen hold", "resolve-hold", "", item.id)) + "</article>").join("") : "";
+  const draft = t.reviewDraft;
+  return '<section class="panel"><h2>Review holds for the re-framed plane</h2>' +
+    '<p class="help">Positions that cannot be carried over stay here with their projected coordinates, so nothing is silently lost.</p>' +
+    form("transfer-hold",
+      input("Hold reason", "reason", "text", draft.reason || "Needs manual relocation after frame replacement", 'maxlength="160" required') +
+      textarea("Review notes", "notes", draft.notes || "") +
+      (draft.mark ? '<p class="status">Source observation: <strong>' + escapeHtml(draft.title || draft.mark) +
+        "</strong></p>" + controls(button("Clear draft", "clear-hold-draft")) : empty("Choose “Save review hold” next to a flagged observation.")) +
+      (draft.mark ? submit("Save review hold") : "")) +
+    (cards ? '<h3>Recorded holds</h3><div class="record-list">' + cards + "</div>" : empty("No review holds recorded yet.")) +
+    "</section>";
+}
+
+function transferSessionsPane() {
+  const t = model.transfer;
+  if (!t.sessions.length) return '<section class="panel">' + empty("No frame transfers have been saved yet.") + "</section>";
+  return '<section class="panel"><h2>Saved frame transfers</h2><div class="record-list">' +
+    t.sessions.map(item => '<article class="list-item"><strong>' + escapeHtml(item.title) +
+      '</strong><small>' + escapeHtml([item.totals?.ready, "carried", item.totals?.review, "held"].filter(v => v !== undefined).join(" ")) +
+      " · " + escapeHtml(item.method) + "</small>" +
+      controls(button("Open transfer record", "view-record", "", item.id),
+        link("Transfer CSV", "/api/frame-transfers/" + item.id + "/data.csv")) + "</article>").join("") +
+    "</div></section>";
+}
+
+async function transferView() {
+  refreshNav("window");
+  const t = model.transfer;
+  t.view = t.view || "setup";
+  mount.innerHTML = pageHeading(currentWindow().title, "Carry old observations onto the replacement frame using shared landmarks.",
+    link("Back to examination desk", "#window/" + currentWindow().id),
+    '<a href="#collection">Window collection</a> / Frame transfer') + transferNav() +
+    '<div class="workspace single" id="transfer-workspace"></div>';
+  const holder = document.getElementById("transfer-workspace");
+  if (t.view === "preview") holder.innerHTML = transferPreviewPane();
+  else if (t.view === "holds") {
+    if (!t.reviews.length) await loadTransferHolds();
+    holder.innerHTML = transferHoldsPane();
+  } else if (t.view === "sessions") {
+    await loadTransferSessions();
+    holder.innerHTML = transferSessionsPane();
+  } else holder.innerHTML = transferSetupPane();
+}
+
+async function loadTransferHolds() {
+  const result = await request(underWindow("/transfer-reviews"));
+  model.transfer.reviews = result.reviews;
+}
+
+async function loadTransferSessions() {
+  const result = await request(underWindow("/frame-transfer"));
+  model.transfer.sessions = result.transfers;
+}
+
+function transferBody() {
+  const t = model.transfer;
+  return {
+    title: t.title || "Frame transfer preview",
+    old_capture: t.oldCapture, new_capture: t.newCapture,
+    landmarks: t.landmarks, include_retired: t.includeRetired, support_floor: t.supportFloor,
+  };
+}
+
 function receivedView(items) {
   refreshNav("received");
   mount.innerHTML = pageHeading("Received evidence", "Verify and open a LumePane evidence ZIP from the local library.") +
@@ -627,6 +804,20 @@ const clicks = {
     await request("/demonstration", "POST", {});
     await refreshRoute();
     flash("Synthetic windows are ready.");
+  },
+  async "frame-demo"() {
+    const result = await request("/frame-transfer-demonstration", "POST", {});
+    const windowId = result.windows[0].id;
+    const caseResult = await request("/windows/" + windowId);
+    const captures = caseResult.captures;
+    model.transfer.pendingPrefill = {
+      oldCapture: captures.find(item => item.caption.includes("Old frame"))?.id || "",
+      newCapture: captures.find(item => item.caption.includes("Replacement"))?.id || "",
+      landmarks: result.landmarks.map(item => ({ name: item.name, old: item.old, new: item.new })),
+      view: "setup", preview: null, mapUrl: null, selected: new Set(),
+    };
+    location.hash = "#window/" + windowId + "/transfer";
+    flash("Re-framing scenario ready. The landmark pairs are pre-filled; preview the projection.");
   },
   "new-window"() { openModal("New window", form("new-window", windowForm())); },
   "edit-window"() { openModal("Edit window", form("edit-window", windowForm(currentWindow()))); },
@@ -895,7 +1086,8 @@ const forms = {
 async function refreshRoute() {
   const tick = ++model.epoch;
   const fragment = location.hash.slice(1);
-  const key = fragment.match(/^window\/([a-f0-9]{24})$/)?.[1];
+  const transferMatch = fragment.match(/^window\/([a-f0-9]{24})\/transfer$/);
+  const key = transferMatch?.[1] || fragment.match(/^window\/([a-f0-9]{24})$/)?.[1];
   if (key) {
     const [result, list, methods] = await Promise.all([request("/windows/" + key), request("/windows"), request("/tools")]);
     if (tick !== model.epoch) return;
@@ -913,8 +1105,15 @@ async function refreshRoute() {
       model.selectedPair = "";
       model.editingMark = null;
       model.pointMode = null;
+      resetTransferModel();
     }
-    windowView();
+    if (transferMatch) {
+      if (model.transfer.pendingPrefill) {
+        Object.assign(model.transfer, model.transfer.pendingPrefill);
+        model.transfer.pendingPrefill = null;
+      }
+      transferView();
+    } else windowView();
   } else {
     const [list, received] = await Promise.all([request("/windows"), fragment === "received" ? request("/receive") : null]);
     if (tick !== model.epoch) return;
@@ -924,6 +1123,15 @@ async function refreshRoute() {
     if (received) receivedView(received.packets);
     else collectionView();
   }
+}
+
+function resetTransferModel() {
+  const t = model.transfer;
+  t.view = null; t.oldCapture = ""; t.newCapture = ""; t.landmarks = [];
+  t.includeRetired = false; t.supportFloor = .98; t.title = "Frame transfer preview";
+  t.preview = null;
+  t.mapUrl = null; t.landmarkUrl = null; t.selected = new Set();
+  t.sessions = []; t.reviews = []; t.reviewDraft = {};
 }
 
 document.addEventListener("click", async event => {
@@ -965,6 +1173,43 @@ document.addEventListener("change", event => {
     model.points = [];
     document.getElementById("measure-options").innerHTML = measureOptions();
     syncBoard();
+  }
+  const landmark = event.target.closest("[data-landmark]");
+  if (landmark) {
+    const t = model.transfer;
+    const index = Number(landmark.dataset.landmark);
+    const key = landmark.dataset.key;
+    if (key === "name") {
+      t.landmarks[index].name = landmark.value;
+    } else {
+      try {
+        const parsed = JSON.parse(landmark.value);
+        if (!Array.isArray(parsed) || parsed.length !== 2 || parsed.some(v => typeof v !== "number")) {
+          throw new Error("bad pair");
+        }
+        t.landmarks[index][key] = parsed;
+        landmark.style.borderColor = "";
+      } catch {
+        landmark.style.borderColor = "#9a4a3c";
+        flash("Enter coordinates as [x, y] number pairs.", true);
+      }
+    }
+    return;
+  }
+  const setup = event.target.closest('[data-form="transfer-setup"]');
+  if (setup) {
+    const t = model.transfer;
+    if (event.target.name === "old_capture") t.oldCapture = event.target.value;
+    if (event.target.name === "new_capture") t.newCapture = event.target.value;
+    if (event.target.name === "support_floor") t.supportFloor = Number(event.target.value);
+    if (event.target.name === "include_retired") t.includeRetired = event.target.checked;
+    if (event.target.name === "title") t.title = event.target.value;
+  }
+  const check = event.target.closest("[data-transfer-check]");
+  if (check) {
+    const t = model.transfer;
+    if (check.checked) t.selected.add(check.dataset.transferCheck);
+    else t.selected.delete(check.dataset.transferCheck);
   }
 });
 window.addEventListener("hashchange", () => refreshRoute().catch(error => showError(error, mount)));
@@ -1009,6 +1254,65 @@ function intakeView(item) {
 
 clicks.intake = intakeDialog;
 clicks["open-intake"] = async key => { intakeView(await request("/intake/" + key)); };
+clicks["open-transfer"] = () => { location.hash = "#window/" + currentWindow().id + "/transfer"; };
+clicks["transfer-tab"] = async key => {
+  model.transfer.view = key;
+  await transferView();
+};
+clicks["add-landmark"] = () => {
+  const t = model.transfer;
+  t.landmarks.push({ name: "Landmark " + (t.landmarks.length + 1), old: [.5, .5], new: [.5, .5] });
+  document.getElementById("landmark-rows").innerHTML = landmarkRows();
+};
+clicks["remove-landmark"] = index => {
+  const t = model.transfer;
+  const at = Number(index);
+  if (t.landmarks.length <= 4) { flash("Keep at least four landmark pairs.", true); return; }
+  t.landmarks.splice(at, 1);
+  document.getElementById("landmark-rows").innerHTML = landmarkRows();
+};
+clicks["select-all-ready"] = () => {
+  const t = model.transfer;
+  t.selected = new Set(t.preview.observations.filter(r => r.status === "ready").map(r => r.mark_id));
+  transferView();
+};
+clicks["open-old-mark"] = async key => openExisting(key);
+clicks["clear-hold-draft"] = () => {
+  model.transfer.reviewDraft = {};
+  transferView();
+};
+clicks["hold-one"] = key => {
+  const row = model.transfer.preview.observations.find(item => item.mark_id === key);
+  model.transfer.reviewDraft = {
+    mark: row.mark_id, title: row.title, reason: row.reason_labels.join(" · ") || "Re-framing review",
+    notes: "", points: row.projected_points,
+  };
+  model.transfer.view = "holds";
+  transferView();
+};
+clicks["carry-one"] = async key => {
+  model.transfer.selected = new Set([key]);
+  await commitCarryOver();
+};
+clicks["carry-selected"] = async () => commitCarryOver();
+clicks["resolve-hold"] = async key => {
+  const item = model.transfer.reviews.find(row => row.id === key);
+  const next = item.status === "open" ? "resolved" : "open";
+  const saved = await request("/transfer-reviews/" + key, "PATCH",
+    { version: item.version, status: next, notes: item.notes });
+  await loadTransferHolds();
+  model.transfer.reviews = model.transfer.reviews.map(row => row.id === key ? saved : row);
+  transferView();
+  flash(next === "resolved" ? "Review hold resolved." : "Review hold reopened.");
+};
+clicks["transfer-preview"] = async () => {
+  await requestTransferPreview();
+  return "Transfer preview ready.";
+};
+clicks["transfer-landmarks"] = async () => {
+  await requestTransferPreview(true);
+  return "Landmark boards ready.";
+};
 clicks["read-source"] = async () => {
   const result = await request(underCapture("/source-check"));
   openModal("Original photograph check", details(result.identity) + "<h3>Working dimensions</h3>" + details(result.dimensions) +
@@ -1065,4 +1369,75 @@ forms["new-condition"] = async element => {
   model.opened = result;
   showRecord(result);
   return "Condition sheet saved.";
+};
+
+async function requestTransferPreview(landmarksOnly = false) {
+  const t = model.transfer;
+  if (!t.oldCapture || !t.newCapture) throw new Error("Choose both the old and the new framed photograph.");
+  if (t.landmarks.length < 4) throw new Error("Mark at least four shared landmark pairs.");
+  const body = transferBody();
+  const path = underWindow(landmarksOnly ? "/frame-transfer/landmarks" : "/frame-transfer/preview");
+  if (landmarksOnly) {
+    const blob = await request(path, "POST", body, true);
+    if (t.landmarkUrl) URL.revokeObjectURL(t.landmarkUrl);
+    t.landmarkUrl = URL.createObjectURL(blob);
+    model.blobUrls.push(t.landmarkUrl);
+    const holder = document.getElementById("landmark-board");
+    if (holder) holder.innerHTML = '<figure class="panel"><img alt="Landmark correspondence boards" src="' +
+      t.landmarkUrl + '"><figcaption>Same landmarks marked on the old and new frames</figcaption></figure>';
+    return;
+  }
+  const response = await fetch("/api" + path, {
+    method: "POST", headers: { "Content-Type": "application/json", Accept: "image/png" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const info = await response.json().catch(() => ({}));
+    throw new Error(info.error || "The transfer preview could not be built.");
+  }
+  t.preview = JSON.parse(response.headers.get("X-Transfer-Payload"));
+  t.selected = new Set(t.preview.observations.filter(row => row.status === "ready").map(row => row.mark_id));
+  const blob = await response.blob();
+  if (t.mapUrl) URL.revokeObjectURL(t.mapUrl);
+  t.mapUrl = URL.createObjectURL(blob);
+  model.blobUrls.push(t.mapUrl);
+  t.view = "preview";
+  await transferView();
+}
+
+async function commitCarryOver() {
+  const t = model.transfer;
+  if (!t.preview) throw new Error("Build a transfer preview first.");
+  const selection = [...t.selected];
+  if (!selection.length) throw new Error("Select at least one ready observation.");
+  const body = { ...transferBody(), selection };
+  const session = await request(underWindow("/frame-transfer"), "POST", body);
+  t.selected = new Set();
+  await loadTransferSessions();
+  model.opened = session;
+  showRecord(session);
+  flash(selection.length + " observation(s) saved on the new frame.");
+  await request(underWindow());
+}
+
+forms["transfer-setup"] = async () => {
+  await requestTransferPreview();
+  return "Transfer preview ready.";
+};
+
+forms["transfer-hold"] = async element => {
+  const t = model.transfer;
+  const draft = t.reviewDraft;
+  if (!draft.mark) throw new Error("Choose a flagged observation to place on hold.");
+  const result = await request(underWindow("/transfer-reviews"), "POST", {
+    session: t.preview?.session || null,
+    mark: draft.mark, new_capture: t.newCapture || null,
+    reason: value(element, "reason"), notes: value(element, "notes"),
+    projected_points: draft.points,
+  });
+  t.reviewDraft = {};
+  await loadTransferHolds();
+  model.opened = result;
+  transferView();
+  return "Review hold recorded. The old observation remains unchanged.";
 };
