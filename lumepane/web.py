@@ -19,6 +19,7 @@ from .demo import demo_library, showcase
 from .evidence import MAX_ARCHIVE_BYTES, freeze_packet, receive_archive, received_view, scale_print
 from .exposure import readout_probe
 from .imaging import encode
+from .panorama import compose_overview, overview_csv, placement_guide
 from .reports import TITLE_FOR, approve_swatch, build_report, evidence_overview, library_view, report_csv, retire_reference
 from .repository import Library
 from .visitlog import save_visit, timeline, visit_notes
@@ -154,6 +155,29 @@ def build_api(library):
     def mark_revise(key, mark):
         with heavy:
             return jsonify(save_mark(library, identifier(key), readable_body(), existing=identifier(mark)))
+
+    @api.get("/windows/<key>/panorama/guide")
+    def panorama_guide(key):
+        with heavy:
+            return picture(placement_guide(library, identifier(key)))
+
+    @api.post("/windows/<key>/panorama/preview")
+    def panorama_preview(key):
+        with heavy:
+            _, images = compose_overview(library, identifier(key), readable_body(), preview=True)
+            return picture(images["overview"])
+
+    @api.post("/windows/<key>/panorama")
+    def panorama_save(key):
+        with heavy:
+            return jsonify(compose_overview(library, identifier(key), readable_body())), 201
+
+    @api.get("/panoramas/<key>/data.csv")
+    def panorama_data(key):
+        with library.use() as db:
+            record = db.one(identifier(key), "panoramas")
+        return send_file(BytesIO(overview_csv(record)), mimetype="text/csv",
+                         download_name="window-overview.csv", as_attachment=True)
 
     @api.post("/windows/<key>/reports")
     def report(key):

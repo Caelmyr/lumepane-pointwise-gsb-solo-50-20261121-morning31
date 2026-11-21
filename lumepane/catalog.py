@@ -324,4 +324,5 @@ def case_contents(library, key):
             "alignment_checks": db.list("alignment_checks", parent=key, limit=100),
             "conditions": db.list("condition_sheets", parent=key, limit=80),
             "intake_sessions": db.list("intake_sessions", parent=key, limit=30),
+            "panoramas": db.list("panoramas", parent=key, limit=40),
         }

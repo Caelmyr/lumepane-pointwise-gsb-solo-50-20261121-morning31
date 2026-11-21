@@ -15,12 +15,12 @@ const categories = {
 const states = { observed: "Observed", review: "Needs review", resolved: "Resolved" };
 const tabs = {
   capture: "Photographs", align: "Register", mark: "Markings", measure: "Examinations",
-  compare: "Compare", evidence: "Evidence", visits: "Visit log"
+  panorama: "Overview", compare: "Compare", evidence: "Evidence", visits: "Visit log"
 };
 const model = {
   list: [], item: null, capture: null, tab: "capture", tool: "exposure", display: null, marks: true,
   plane: true, active: null, pointMode: null, points: [], blobUrls: [], editingMark: null, opened: null,
-  tools: {}, selectedPair: "", probe: null, epoch: 0
+  tools: {}, selectedPair: "", probe: null, epoch: 0, panorama: null
 };
 const today = () => new Date().toISOString().slice(0, 10);
 const title = text => String(text || "").replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
@@ -170,21 +170,7 @@ function capturePicture() {
 }
 
 function boardView(item) {
-  if (!photo()) return '<section class="panel">' + empty("Add a photograph to inspect this window.") + "</section>";
-  const selection = photo();
-  const strip = item.captures.map(capture => '<button type="button" data-action="select-photo" data-id="' + capture.id +
-    '"' + current(capture.id === model.capture) + "><strong>" + escapeHtml(roles[capture.role]) +
-    "</strong><small>" + escapeHtml(capture.visit || capture.day || captureLabel(capture)) + "</small></button>").join("");
-  return '<div><section class="panel photo" aria-label="Photograph viewer"><div class="photo-toolbar"><strong>' +
-    escapeHtml(captureLabel(selection)) + "</strong>" +
-    controls(button(model.plane ? "Source view" : "Window plane", "plane"),
-      button(model.marks ? "Hide marks" : "Show marks", "overlay"), button("Reset view", "reset-view")) +
-    '</div><div class="photo-board"><div class="photo-area" id="photo-area">' +
-    '<img id="active-picture" alt="' + attr(captureLabel(selection)) + '"><canvas id="point-layer"></canvas></div></div>' +
-    '<div class="photo-note"><span id="basis-note"></span><span>' + escapeHtml(selection.visit || "Capture") +
-    (selection.day ? " · " + escapeHtml(selection.day) : "") + (selection.synthetic ? " · Synthetic" : "") +
-    '</span></div></section><div class="strip" aria-label="Photographs">' + strip + "</div>" +
-    '<div id="bench-result"></div></div>';
+  return '<div>' + boardPhoto(item) + '</div>';
 }
 
 function windowView() {
@@ -193,13 +179,14 @@ function windowView() {
   refreshNav("window");
   const description = [win.code, win.location, win.physical_mm?.join(" × ") && win.physical_mm.join(" × ") + " mm",
     win.synthetic ? "Synthetic demonstration" : ""].filter(Boolean).join(" · ");
+  const board = model.tab === "panorama" ? overviewBoard(item) : boardView(item);
   mount.innerHTML = pageHeading(win.title, description,
     controls(button("Edit window", "edit-window"), button("Photo intake", "intake"), button("Add photograph", "add-photo", "primary")),
     '<a href="#collection">Window collection</a> / Examination desk') +
     '<nav class="tabs" aria-label="Examination desk">' +
     Object.entries(tabs).map(([key, label]) => '<button type="button" data-action="tab" data-id="' + key +
       '"' + current(key === model.tab) + ">" + label + "</button>").join("") + "</nav>" +
-    '<div class="workspace">' + boardView(item) + '<aside class="panel inspect" id="inspector"></aside></div>';
+    '<div class="workspace">' + board + '<aside class="panel inspect" id="inspector"></aside></div>';
   const view = photo();
   const image = document.getElementById("active-picture");
   if (image) image.addEventListener("load", drawPoints);
@@ -208,9 +195,29 @@ function windowView() {
   if (view && model.opened) {
     renderResult(model.opened);
   }
+  if (model.tab === "panorama" && panoramaState().placing) syncPlacement();
+}
+
+function boardPhoto(item) {
+  if (!photo()) return '<section class="panel">' + empty("Add a photograph to inspect this window.") + "</section>";
+  const selection = photo();
+  const strip = item.captures.map(capture => '<button type="button" data-action="select-photo" data-id="' + capture.id +
+    '"' + current(capture.id === model.capture) + "><strong>" + escapeHtml(roles[capture.role]) +
+    "</strong><small>" + escapeHtml(capture.visit || capture.day || captureLabel(capture)) + "</small></button>").join("");
+  return '<section class="panel photo" aria-label="Photograph viewer"><div class="photo-toolbar"><strong>' +
+    escapeHtml(captureLabel(selection)) + "</strong>" +
+    controls(button(model.plane ? "Source view" : "Window plane", "plane"),
+      button(model.marks ? "Hide marks" : "Show marks", "overlay"), button("Reset view", "reset-view")) +
+    '</div><div class="photo-board"><div class="photo-area" id="photo-area">' +
+    '<img id="active-picture" alt="' + attr(captureLabel(selection)) + '"><canvas id="point-layer"></canvas></div></div>' +
+    '<div class="photo-note"><span id="basis-note"></span><span>' + escapeHtml(selection.visit || "Capture") +
+    (selection.day ? " · " + escapeHtml(selection.day) : "") + (selection.synthetic ? " · Synthetic" : "") +
+    '</span></div></section><div class="strip" aria-label="Photographs">' + strip + "</div>" +
+    '<div id="bench-result"></div>';
 }
 
 function syncBoard() {
+  if (panoramaState().placing) return syncPlacement();
   const area = document.getElementById("photo-area");
   const image = document.getElementById("active-picture");
   const basis = document.getElementById("basis-note");
@@ -219,6 +226,19 @@ function syncBoard() {
   const url = model.active || capturePicture();
   if (image.getAttribute("src") !== url) image.setAttribute("src", url);
   basis.textContent = model.active ? "Examination preview" : model.plane && photo()?.alignment ? "Registered window plane" : "Original photograph";
+  drawPoints();
+}
+
+function syncPlacement() {
+  const state = panoramaState();
+  const area = document.getElementById("photo-area");
+  const image = document.getElementById("active-picture");
+  if (!area || !image || !state.placing) return;
+  area.toggleAttribute("data-cursor", true);
+  const wanted = "/api" + underWindow("/panorama/guide");
+  if (image.getAttribute("src") !== wanted) image.setAttribute("src", wanted);
+  const existing = placementOf(state.placing);
+  if (existing?.corners && !model.points.length) model.points = existing.corners.map(item => item.slice());
   drawPoints();
 }
 
@@ -251,7 +271,7 @@ function drawPoints() {
 function setInspector() {
   const holder = document.getElementById("inspector");
   if (!holder) return;
-  const general = { evidence: evidencePane, visits: visitPane };
+  const general = { evidence: evidencePane, visits: visitPane, panorama: overviewPane };
   const photographic = { capture: capturePane, align: alignmentPane, mark: markPane, measure: measurePane, compare: comparePane };
   holder.innerHTML = "<h2>" + escapeHtml(tabs[model.tab]) + "</h2>" +
     (general[model.tab]?.() ?? (photo() ? photographic[model.tab]?.() : empty("Add a photograph to use this workspace.")));
@@ -372,6 +392,103 @@ function measurePane() {
       "</article>", "No saved examinations for this window.");
 }
 
+function panoramaState() {
+  if (!model.panorama) {
+    model.panorama = { title: "Whole-window overview", tolerance: .05, grid: 6, placements: [], preview: null, record: null };
+  }
+  return model.panorama;
+}
+
+function placementOf(key) {
+  return panoramaState().placements.find(item => item.capture === key);
+}
+
+function panoramaCandidates() {
+  return model.item.captures.filter(item => ["transmitted", "reflected", "rake_left", "rake_right"].includes(item.role));
+}
+
+function overviewBoard(item) {
+  const state = panoramaState();
+  if (state.placing) {
+    const capture = item.captures.find(entry => entry.id === state.placing);
+    return '<div><section class="panel photo" aria-label="Mark segment on the window">' +
+      '<div class="photo-toolbar"><strong>Place ' + escapeHtml(capture ? captureLabel(capture) : "segment") + ' on the window</strong>' +
+      controls(button("Whole window", "panorama-whole"), button("Cancel", "panorama-cancel")) + '</div>' +
+      '<div class="photo-board"><div class="photo-area" id="photo-area">' +
+      '<img id="active-picture" alt="Window plane guide"><canvas id="point-layer"></canvas></div></div>' +
+      '<div class="photo-note"><span id="basis-note">Window plane · ' + escapeHtml(state.title) + '</span><span>Click four corners clockwise from the upper left.</span></div></section>' +
+      placedList(item) + '</div>';
+  }
+  return '<div><section class="panel photo" aria-label="Whole-window overview">' +
+    '<div class="photo-toolbar"><strong>' + escapeHtml(state.title) + '</strong>' +
+    controls(button(state.preview ? "Refresh overview" : "Preview overview", "panorama-preview")) + '</div>' +
+    '<div class="photo-board"><div class="photo-area" id="overview-area">' +
+    (state.preview ? '<img id="overview-picture" alt="Combined window overview" src="' + attr(state.preview) + '">' :
+      '<p class="empty">Place at least one photograph, then preview the combined overview.</p>') +
+    '</div></div>' +
+    '<div class="photo-note"><span>' + (state.record ?
+      state.record.reading.photograph_count + " photographs · " + state.record.reading.seam_count + " seam marker(s) · " +
+      state.record.reading.empty_pixels.toLocaleString() + " empty pixels" :
+      "Choose segments and mark where each one sits on the window.") + '</span></div></section>' +
+    placedList(item) + '</div>';
+}
+
+function placedList(item) {
+  const state = panoramaState();
+  const chosen = state.placements.map((placement, index) => {
+    const capture = item.captures.find(entry => entry.id === placement.capture);
+    const label = capture ? captureLabel(capture) : placement.capture;
+    return '<li><strong>' + "ABCDEFGH"[index] + '</strong> ' + escapeHtml(label) +
+      ' <button type="button" class="linkish" data-action="panorama-place" data-id="' + placement.capture + '">Move corners</button>' +
+      ' <button type="button" class="linkish" data-action="panorama-remove" data-id="' + placement.capture + '">Remove</button></li>';
+  }).join("");
+  return '<section class="panel overview-sources"><h3>Photographs in this overview</h3>' +
+    (state.placements.length ? '<ol class="source-fingers">' + chosen + '</ol>' :
+      empty("Add a photographed segment to begin.")) + '</section>';
+}
+
+function overviewPane() {
+  const state = panoramaState();
+  const all = panoramaCandidates();
+  const options = Object.fromEntries(all.filter(item => !placementOf(item.id)).map(item => [item.id, captureLabel(item)]));
+  const visits = [...new Set(all.map(item => item.visit || "(no inspection label)"))];
+  const lighting = [...new Set(all.map(item => roles[item.role]))];
+  return '<p class="help">Only photographs made at one lighting and one inspection visit can be combined. ' +
+    'Mark each segment\'s four corners on the window. When two clear segments disagree, a numbered seam marker is kept.</p>' +
+    '<p class="status">Available: ' + escapeHtml(visits.join(", ") || "none") + " · " + escapeHtml(lighting.join(", ") || "none") + "</p>" +
+    form("panorama", input("Overview title", "title", "text", state.title, 'required maxlength="100"') +
+      row(input("Disagreement tolerance", "tolerance", "number", state.tolerance, 'min=".004" max=".5" step=".001"'),
+        input("Coverage cells", "grid", "number", state.grid, 'min="2" max="24" step="1"')) +
+      selector("Add photograph", "add", { "": "Choose a photograph", ...options }) +
+      controls(button("Add to overview", "panorama-add")) +
+      '<p class="help">Corners are marked on the window plane, clockwise from the upper left. A segment photographed straight-on usually keeps the whole window rectangle; a close-up covers only part of it.</p>' +
+      controls(button("Preview overview", "panorama-preview", "primary"), submit("Save overview"))) +
+    (state.record ? '<div class="overview-result"><h3>' + escapeHtml(state.record.title) + "</h3>" +
+      details(state.record.reading) +
+      '<h4>Source photographs</h4><div class="record-list">' + state.record.sources.map((source, index) =>
+        '<p class="list-item"><strong>' + "ABCDEFGH"[index] + " · " + escapeHtml(source.caption) + "</strong><small>" +
+        escapeHtml([roles[source.role], source.visit, source.day].filter(Boolean).join(" · ")) + "<br>" +
+        source.contribution.contributed_pixels.toLocaleString() + " pixels kept · " +
+        source.contribution.skipped_for_earlier_clear.toLocaleString() + " yielded to an earlier clear sample · " +
+        source.contribution.conflict_pixels.toLocaleString() + " disagreed<br>Source SHA-256 " +
+        escapeHtml(source.source_sha256) + "</small></p>").join("") + "</div>" +
+      '<p class="help">' + state.record.cells.filter(cell => cell.state === "empty").length +
+      " coverage cells were not photographed by any segment and stay empty.</p>" +
+      '<p class="help">Existing marks on the registered window plane that mark a region occluded or excluded are applied only to the photograph they were drawn on, so another clear segment can still supply that glass.</p>' +
+      (state.record.seams.length ? '<h4>Seam markers</h4>' + listCards(state.record.seams.slice(0, 24), seam =>
+        '<article class="list-item"><strong>Seam ' + seam.number + " · " + escapeHtml(seam.later_label) + " over " + escapeHtml(seam.earlier_label) + "</strong><small>" +
+        escapeHtml(seam.later_caption + " / " + (seam.earlier_caption || "earlier segment") + " · " + seam.pixels.toLocaleString() + " px · median Δ " + seam.median_delta) +
+        "</small>" + controls(button("Trace both sources", "panorama-seam", "", String(seam.number))) + "</article>", "") :
+        '<p class="help">No clear samples disagreed at this tolerance.</p>') +
+      controls(button("Open saved record", "view-record", "", state.record.id),
+        link("Download overview CSV", "/api/panoramas/" + state.record.id + "/data.csv")) + "</div>" : "") +
+    listCards(model.item.panoramas.slice(0, 12), record =>
+      '<article class="list-item"><strong>' + escapeHtml(record.title) + "</strong><small>" +
+      escapeHtml(record.reading.photograph_count + " photographs · " + record.reading.seam_count + " seam(s) · " + (record.visit || "no visit")) +
+      "</small>" + controls(button("Reopen overview", "panorama-open", "", record.id),
+        link("CSV", "/api/panoramas/" + record.id + "/data.csv")) + "</article>", "No saved overviews yet.");
+}
+
 function comparePane() {
   if (!photo()?.alignment) return empty("Register this capture before comparing it with another view.");
   const list = model.item.captures.filter(item => item.alignment && item.id !== model.capture);
@@ -422,7 +539,7 @@ function details(data) {
 function pictureAssets(item) {
   return (item.assets || []).map(asset => {
     const href = imageSource(item.id, asset.label);
-    if (asset.mime === "image/png" && ["map", "chart", "thumbnail", "plane", "support", "diff", "photo"].includes(asset.label)) {
+    if (asset.mime === "image/png" && ["map", "chart", "thumbnail", "plane", "support", "diff", "photo", "source"].includes(asset.label)) {
       return '<figure class="panel"><img loading="lazy" src="' + href + '" alt="' + attr(title(asset.label)) + '"><figcaption>' +
         escapeHtml(title(asset.label)) + "</figcaption></figure>";
     }
@@ -526,6 +643,17 @@ function alignData(element) {
   return { corners: parsePoints(element, "points"), capture_version: photo().version, window_version: currentWindow().version };
 }
 
+function panoramaData() {
+  const state = panoramaState();
+  const element = findForm("panorama");
+  return {
+    title: element ? value(element, "title") || state.title : state.title,
+    tolerance: element ? number(element, "tolerance") : state.tolerance,
+    grid: element ? Math.round(number(element, "grid")) : state.grid,
+    placements: state.placements.map(item => ({ capture: item.capture, corners: item.corners })),
+  };
+}
+
 function underWindow(path = "") {
   return "/windows/" + currentWindow().id + path;
 }
@@ -546,7 +674,9 @@ function pointStart(mode) {
   model.active = null;
   model.points = [];
   model.pointMode = mode;
-  const wantedPlane = mode === "mark" ? (model.editingMark ?
+  const state = panoramaState();
+  if (mode !== "placement" && state.placing) state.placing = null;
+  const wantedPlane = mode === "placement" ? false : mode === "mark" ? (model.editingMark ?
     model.item.marks.find(mark => mark.id === model.editingMark)?.coordinate_basis === "window" : true) :
     mode === "align" || mode === "survey" ? false : model.plane;
   if (wantedPlane !== model.plane) model.plane = wantedPlane;
@@ -554,6 +684,7 @@ function pointStart(mode) {
   if (element?.elements.points) element.elements.points.value = "";
   syncBoard();
   flash(mode === "align" ? "Click four corners, beginning at the upper left."
+    : mode === "placement" ? "Click the four corners this segment occupies on the window, clockwise from the upper left."
     : mode === "survey" ? "Click the planned survey position."
     : mode === "probe" ? "Click the point to read." : "Click points on the photograph to draw.");
 }
@@ -564,7 +695,25 @@ function pointClick(event) {
   const frame = image.getBoundingClientRect();
   const clamp = value => Math.round(Math.max(0, Math.min(1, value)) * 100000) / 100000;
   const point = [clamp((event.clientX - frame.left) / frame.width), clamp((event.clientY - frame.top) / frame.height)];
-  if (model.pointMode === "probe" || model.pointMode === "survey") {
+  if (model.pointMode === "placement") {
+    if (model.points.length >= 4) model.points = [];
+    model.points.push(point);
+    if (model.points.length === 4) {
+      const state = panoramaState();
+      const placement = placementOf(state.placing);
+      const corners = model.points.map(item => item.slice());
+      if (placement) placement.corners = corners;
+      else state.placements.push({ capture: state.placing, corners });
+      state.placing = null;
+      state.preview = null;
+      state.record = null;
+      model.points = [];
+      model.pointMode = null;
+      windowView();
+      flash("Segment corners recorded.");
+      return;
+    }
+  } else if (model.pointMode === "probe" || model.pointMode === "survey") {
     const form = findForm(model.pointMode);
     form.elements.x.value = point[0];
     form.elements.y.value = point[1];
@@ -646,6 +795,9 @@ const clicks = {
     model.tab = key;
     model.pointMode = null;
     model.plane = key !== "align";
+    if (key !== "panorama" && panoramaState().placing) {
+      panoramaState().placing = null;
+    }
     windowView();
   },
   plane() {
@@ -703,6 +855,110 @@ const clicks = {
     model.points = [];
     usePicture(blob);
     document.getElementById("align-note").textContent = "Preview ready. Save alignment to use this window plane.";
+  },
+  async "panorama-add"() {
+    const element = findForm("panorama");
+    const key = value(element, "add");
+    if (!key) throw new Error("Choose a photograph to add to the overview.");
+    const state = panoramaState();
+    if (!placementOf(key)) state.placements.push({ capture: key, corners: null });
+    state.preview = null;
+    state.record = null;
+    state.placing = key;
+    model.pointMode = "placement";
+    model.points = [];
+    windowView();
+  },
+  "panorama-place"(key) {
+    clearPhoto();
+    const state = panoramaState();
+    state.placing = key;
+    model.pointMode = "placement";
+    model.points = [];
+    state.preview = null;
+    state.record = null;
+    windowView();
+  },
+  "panorama-whole"() {
+    const state = panoramaState();
+    const placement = placementOf(state.placing);
+    if (placement) placement.corners = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    state.placing = null;
+    state.preview = null;
+    state.record = null;
+    model.pointMode = null;
+    model.points = [];
+    windowView();
+    flash("The whole photograph will fill the overview.");
+  },
+  "panorama-cancel"() {
+    const state = panoramaState();
+    if (state.placing && !placementOf(state.placing)?.corners) {
+      state.placements = state.placements.filter(item => item.capture !== state.placing);
+    }
+    state.placing = null;
+    model.pointMode = null;
+    model.points = [];
+    windowView();
+  },
+  "panorama-remove"(key) {
+    const state = panoramaState();
+    state.placements = state.placements.filter(item => item.capture !== key);
+    state.preview = null;
+    state.record = null;
+    windowView();
+  },
+  async "panorama-preview"() {
+    const state = panoramaState();
+    if (!state.placements.length) throw new Error("Add a photograph before previewing the overview.");
+    if (state.placements.some(item => !item.corners)) throw new Error("Mark the four corners for every photograph.");
+    const element = findForm("panorama");
+    if (element) {
+      state.title = value(element, "title") || state.title;
+      state.tolerance = number(element, "tolerance");
+      state.grid = Math.round(number(element, "grid"));
+    }
+    if (state.preview) URL.revokeObjectURL(state.preview);
+    const blob = await request(underWindow("/panorama/preview"), "POST", panoramaData(), true);
+    state.preview = URL.createObjectURL(blob);
+    state.record = null;
+    windowView();
+    flash("Overview preview ready.");
+  },
+  async "panorama-seam"(number) {
+    const state = panoramaState();
+    const seam = state.record?.seams.find(item => item.number === Number(number));
+    if (!seam) return;
+    const a = model.item.captures.find(item => item.id === seam.earlier_capture);
+    const b = model.item.captures.find(item => item.id === seam.later_capture);
+    const box = seam.bounds.join(", ");
+    openModal("Seam " + seam.number + " · source photographs",
+      '<p class="help">Both sources stay recorded. This marker covers plane pixels [' + box + "] with " +
+      seam.pixels.toLocaleString() + " disagreeing pixels.</p>" +
+      '<div class="reader">' + [[a, seam.earlier_label, "Kept in this overview"], [b, seam.later_label, "Conflicting later sample"]]
+        .filter(([capture]) => capture).map(([capture, letter, note]) =>
+          '<figure class="panel"><img loading="lazy" src="' + imageSource(capture.id, "thumbnail") + '" alt=""><figcaption><strong>' +
+          letter + " · " + escapeHtml(captureLabel(capture)) + "</strong><br>" + escapeHtml(note) + "<br>" +
+          escapeHtml([capture.role, capture.visit, capture.day].filter(Boolean).join(" · ")) + "<br>" +
+          "Source SHA-256 " + escapeHtml(capture.original_digest.slice(0, 16)) + "…</figcaption></figure>").join("") + "</div>",
+      true);
+  },
+  async "panorama-open"(key) {
+    const record = await request("/records/" + key);
+    const state = panoramaState();
+    state.title = record.title;
+    state.tolerance = record.tolerance;
+    state.grid = record.grid;
+    state.placements = record.sources.map(source => ({ capture: source.capture, corners: source.corners }));
+    state.record = record;
+    state.placing = null;
+    model.pointMode = null;
+    model.points = [];
+    if (state.preview && state.preview.startsWith("blob:")) URL.revokeObjectURL(state.preview);
+    state.preview = imageSource(record.id, "map");
+    model.capture = record.sources[0]?.capture ?? model.capture;
+    windowView();
+    flash("Overview reopened from its saved record.");
   },
   async "preview-report"() {
     const element = findForm("report");
@@ -786,6 +1042,22 @@ const forms = {
     model.plane = true;
     await refreshWindow();
     return result.duplicate ? "This photograph was already in the window." : "Photograph added.";
+  },
+  async panorama(el) {
+    const state = panoramaState();
+    if (!state.placements.length) throw new Error("Add a photograph before saving the overview.");
+    if (state.placements.some(entry => !entry.corners)) throw new Error("Mark the four corners for every photograph.");
+    const item = await request(underWindow("/panorama"), "POST", panoramaData());
+    state.title = item.title;
+    state.tolerance = item.tolerance;
+    state.grid = item.grid;
+    state.placements = item.sources.map(source => ({ capture: source.capture, corners: source.corners }));
+    state.record = item;
+    if (state.preview && state.preview.startsWith("blob:")) URL.revokeObjectURL(state.preview);
+    state.preview = imageSource(item.id, "map");
+    await refreshWindow();
+    showRecord(item);
+    return "Window overview saved.";
   },
   async "edit-photo"(el) {
     await request(underCapture(""), "PATCH", { caption: value(el, "caption"), visit: value(el, "visit"),
@@ -913,6 +1185,8 @@ async function refreshRoute() {
       model.selectedPair = "";
       model.editingMark = null;
       model.pointMode = null;
+      if (model.panorama?.preview?.startsWith("blob:")) URL.revokeObjectURL(model.panorama.preview);
+      model.panorama = null;
     }
     windowView();
   } else {
